@@ -1,0 +1,5 @@
+*.dll
+*.pyd
+bin/
+inc/*.h
+*.lib
