@@ -1,5 +1,6 @@
 *.dll
+dll/
 *.pyd
 bin/
-inc/*.h
-*.lib
+inc/
+lib/
