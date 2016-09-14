@@ -13,10 +13,11 @@ if ! [ python.configured ]
     using python ;
 }
 
-# Specify the path to the Boost project.  If you move this project,
-# adjust this path to refer to the Boost root directory.
+# Specify the path to the Boost project.
+import os ;
+local BOOST_ROOT = [ os.environ BOOST_ROOT ] ;
 use-project boost
-  : C:/boost_1_61_0 ;
+  : $(BOOST_ROOT:T) ;
 
 # Set up the project-wide requirements that everything uses the
 # boost_python library from the project whose global ID is
@@ -24,7 +25,7 @@ use-project boost
 project
   : requirements <library>/boost/python//boost_python
                  <implicit-dependency>/boost//headers
-  : requirements <library>./lib/32bit(x86)/PDCLIB.lib
+  : requirements <library>./lib/PDCLIB.lib
   : requirements <include>./inc
   : usage-requirements <implicit-dependency>/boost//headers
   ;
