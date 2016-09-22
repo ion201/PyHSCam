@@ -1,15 +1,16 @@
 # PyHSCam
 
-A C-based python interface for interacting with Photron high-speed cameras.
+A C-based python interface for interacting with Photron high-speed cameras from a Windows host.
 
 ## Usage
 
-See `example.py` for sample usage. Python must have an exception in Windows Firewall to detect devices. All module errors will be raised as `RuntimeError`.
+See `example.py` for sample usage. Python must have an exception in Windows Firewall to detect devices.
 
 ## Runtime
 
-The module requires the following files in the project directory to import and use this api. If an essential sdk dll is missing (other than `PDCLIB.dll`), the module will throw a RuntimeError with error code 100.
+The module requires the following files in the project directory to import and use this module. If an essential sdk dll is missing (other than `PDCLIB.dll`), the module will throw a PyHSCam.CamRuntimeError with error code 100.
 
+    ./MyProject.py
     ./PyHSCam.pyd
     ./PDCLIB.dll
     ./dll/D512PCI.dll
@@ -29,12 +30,12 @@ The module requires the following files in the project directory to import and u
 
 The rest of this readme will assume that you extracted boost to `C:\boost\boost_1_61_0` and installed python to `C:\Program Files (x86)\Python35-32\`.
 
-### Prerequesites
+### Preparation
 
 1. Set environment variables:
     1. `BOOST_ROOT` = `C:\boost\boost_1_61_0\`
     2. `Path` += `C:\boost\boost_1_61_0\;`
-2. Create `C:\Users\myUser\user-config.jam` with the following contents. Note: `msvc : 14.0` = Visual C++ 2015 compiler. Older compilers may work but haven't been tested.
+2. Create new file `C:\Users\myUserName\user-config.jam` with the following contents. Note: `msvc : 14.0` = Visual C++ 2015 compiler. Older compilers may work but haven't been tested.
 
         using msvc : 14.0 ;
         import toolset : using ;

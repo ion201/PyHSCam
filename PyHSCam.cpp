@@ -46,7 +46,7 @@ uint64_t
     PyHSCam_openDeviceByIp(const char * ipStr);
 
 void
-    PyHSCam_setDeviceStatus(uint64_t interfaceId, unsigned long newStatus);
+    PyHSCam_assertDeviceStatus(uint64_t interfaceId, unsigned long status);
 
 unsigned long
     PyHSCam_getCurrentCapRate(uint64_t interfaceId);
@@ -278,7 +278,53 @@ uint64_t PyHSCam_openDeviceByIp(const char * ipStr)
 
     // TODO: Return a list of IDs (required for supporting more than one child).
 
+    // Enable burst transfer if possible
+    char functionStatus;
+    retVal = PDC_IsFunction(deviceNum,
+                                childNum,
+                                PDC_EXIST_BURST_TRANSFER,
+                                &functionStatus,    // Output
+                                &errorCode);        // Output
+
+    if (retVal == PDC_FAILED)
+    {
+        throw CamRuntimeError("Failed to retrieve status of library function!", errorCode);
+    }
+    if (functionStatus == PDC_EXIST_SUPPORTED)
+    {
+        retVal = PDC_SetBurstTransfer(deviceNum,
+                                        PDC_FUNCTION_ON,
+                                        &errorCode);
+        if (retVal == PDC_FAILED)
+        {
+            throw CamRuntimeError("Failed to enable burst transfer mode!", errorCode);
+        }
+    }
+
     return IFACE_ID_FROM_VALUES(deviceNum, childNum);
+}
+
+void PyHSCam_assertDeviceStatus(uint64_t interfaceId, unsigned long status)
+{
+    // Ensure the device is in the necessary status and if it isn't, set it.
+    // Changing the device status is fairly costly so we want to change
+    // it as infrequently as possible.
+    unsigned long retVal;
+    unsigned long errorCode;
+
+    unsigned long deviceStatus;
+    deviceStatus = PyHSCam_getStatus(interfaceId);
+
+    if (deviceStatus != status)
+    {
+        retVal = PDC_SetStatus(IFACE_ID_GET_DEV_NUM(interfaceId),
+                                status,
+                                &errorCode);
+        if (retVal == PDC_FAILED)
+        {
+            throw CamRuntimeError("Failed to set status!", errorCode);
+        }
+    }
 }
 
 unsigned long PyHSCam_getCurrentCapRate(uint64_t interfaceId)
@@ -296,20 +342,6 @@ unsigned long PyHSCam_getCurrentCapRate(uint64_t interfaceId)
         throw CamRuntimeError("Failed to retrieve current capture rate!", errorCode);
     }
     return capRate;
-}
-
-void PyHSCam_setDeviceStatus(uint64_t interfaceId, unsigned long newStatus)
-{
-    unsigned long retVal;
-    unsigned long errorCode;
-
-    retVal = PDC_SetStatus(IFACE_ID_GET_DEV_NUM(interfaceId),
-                            newStatus,
-                            &errorCode);
-    if (retVal == PDC_FAILED)
-    {
-        throw CamRuntimeError("Failed to set status!", errorCode);
-    }
 }
 
 boost::python::list PyHSCam_getValidCapRates(uint64_t interfaceId)
@@ -342,6 +374,8 @@ boost::python::list PyHSCam_getValidCapRates(uint64_t interfaceId)
 
 void PyHSCam_setCapRate(uint64_t interfaceId, unsigned long capRate)
 {
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
+
     boost::python::list pyModeList;
     pyModeList = PyHSCam_getValidCapRates(interfaceId);
 
@@ -375,6 +409,8 @@ void PyHSCam_setCapRate(uint64_t interfaceId, unsigned long capRate)
 
 PyObject * PyHSCam_captureLiveImage(uint64_t interfaceId)
 {
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
+
     char * imageBuf;
     unsigned long imgWidth;
     unsigned long imgHeight;
@@ -425,7 +461,8 @@ PDC_FRAME_INFO PyHSCam_getMemoryFrameInfo(uint64_t interfaceId)
 
     if (PyHSCam_getStatus(interfaceId) != PDC_STATUS_PLAYBACK)
     {
-        throw CamRuntimeError("Module attempted to read frame info without the status set to PLAYBACK.");
+        throw CamRuntimeError("Module attempted to read frame info without the status set to PLAYBACK. "
+                                "This should never happen.");
     }
 
     retVal = PDC_GetMemFrameInfo(IFACE_ID_GET_DEV_NUM(interfaceId),
@@ -443,15 +480,10 @@ PDC_FRAME_INFO PyHSCam_getMemoryFrameInfo(uint64_t interfaceId)
 
 long PyHSCam_getMemoryFrameCount(uint64_t interfaceId)
 {
-    if (PyHSCam_getStatus(interfaceId) != PDC_STATUS_PLAYBACK)
-    {
-        PyHSCam_setDeviceStatus(interfaceId, PDC_STATUS_PLAYBACK);
-    }
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_PLAYBACK);
 
     PDC_FRAME_INFO frameInfo;
     frameInfo = PyHSCam_getMemoryFrameInfo(interfaceId);
-
-    PyHSCam_setDeviceStatus(interfaceId, PDC_STATUS_LIVE);
 
     return frameInfo.m_nRecordedFrames;
 }
@@ -459,14 +491,12 @@ long PyHSCam_getMemoryFrameCount(uint64_t interfaceId)
 
 PyObject * PyHSCam_getImageFromMemory(uint64_t interfaceId, unsigned long frameN)
 {
+    // The mode must be set to PDC_STATUS_PLAYBACK to read from memory
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_PLAYBACK);
+
     unsigned long retVal;
     unsigned long errorCode;
-
-    // The mode must be set to PDC_STATUS_PLAYBACK to read from memory
-    if (PyHSCam_getStatus(interfaceId) != PDC_STATUS_PLAYBACK)
-    {
-        PyHSCam_setDeviceStatus(interfaceId, PDC_STATUS_PLAYBACK);
-    }
+    clock_t startTime = clock();
 
     PDC_FRAME_INFO frameInfo;
     frameInfo = PyHSCam_getMemoryFrameInfo(interfaceId);
@@ -512,8 +542,6 @@ PyObject * PyHSCam_getImageFromMemory(uint64_t interfaceId, unsigned long frameN
     PyObject * pyImageBuf = PyBytes_FromStringAndSize(imageBuf, imageBufSize);
     free(imageBuf);
 
-    PyHSCam_setDeviceStatus(interfaceId, PDC_STATUS_LIVE);
-
     return pyImageBuf;
 }
 
@@ -540,6 +568,8 @@ boost::python::tuple PyHSCam_getCurrentResolution(uint64_t interfaceId)
 
 void PyHSCam_setResolution(uint64_t interfaceId, unsigned long width, unsigned long height)
 {
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
+
     unsigned long retVal;
     unsigned long errorCode;
 
@@ -630,11 +660,20 @@ void PyHSCam_beginRecording(uint64_t interfaceId)
     // Begin recording endlessly (or until we run out of memory).
     // This function does not handle exiting recording mode or halting recording.
 
+    unsigned long deviceStatus;
+
+    deviceStatus = PyHSCam_getStatus(interfaceId);
+    if (deviceStatus != PDC_STATUS_LIVE)
+    {
+        throw CamRuntimeError("Device attempted to begin recording while not in LIVE mode. "
+                                "This should never happen.");
+    }
+
     unsigned long errorCode;
     unsigned long retVal;
 
     retVal = PDC_SetTriggerMode(IFACE_ID_GET_DEV_NUM(interfaceId),
-                                PDC_TRIGGER_CENTER,
+                                PDC_TRIGGER_END,
                                 0,              // nAFrames: Unused in endless mode
                                 0,              // nRFrames: Unused in endless mode
                                 0,              // nRCount:  Unused in endless mode
@@ -652,9 +691,6 @@ void PyHSCam_beginRecording(uint64_t interfaceId)
         throw CamRuntimeError("Failed to set record to ready!", errorCode);
     }
 
-    // This should confirm the operating mode of the device
-    unsigned long deviceStatus;
-    // TODO: Could switch to <chrono> library for sub-ms precision
     clock_t startTime;
     // Timeout in ms. This check confirms that the camera is operating in record mode
     // before we begin recording.
@@ -679,7 +715,7 @@ void PyHSCam_beginRecording(uint64_t interfaceId)
 
     // Start the recording
     retVal = PDC_SetEndless(IFACE_ID_GET_DEV_NUM(interfaceId),
-                            &errorCode);
+                                &errorCode);
     if (retVal == PDC_FAILED)
     {
         throw CamRuntimeError("Device trigger in (begin recording) failed!", errorCode);
@@ -688,12 +724,8 @@ void PyHSCam_beginRecording(uint64_t interfaceId)
 
 void PyHSCam_haltRecording(uint64_t interfaceId)
 {
-    // Assumes that the device is in recording mode and actively recording
-    // Halt it forcibly by setting the mode to "LIVE"
-    unsigned long retVal;
-    unsigned long errorCode;
-
-    PyHSCam_setDeviceStatus(interfaceId, PDC_STATUS_LIVE);
+    // Halt recording forcibly by setting the mode to "LIVE"
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
 }
 
 
