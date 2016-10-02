@@ -99,7 +99,7 @@ long
 
 
 // Implement a custom python exception so that we don't have to raise RuntimeError
-// The python code will be able to catch PyCamHS.CamRuntimeError
+// The python code will be able to catch PyHSCam.CamRuntimeError
 class CamRuntimeError : public std::exception
 {
 private:
@@ -165,7 +165,7 @@ void convertCppExceptionToPy(CamRuntimeError const &except)
         throw std::runtime_error("Module somehow managed to raise an exception before the module was initialized\n"
                                  "This should never happen.");
     }
-#define MSG_BUF_MAX_LEN 80
+#define MSG_BUF_MAX_LEN 150
     char msgBuf[MSG_BUF_MAX_LEN];
     if (except.hasErrorCode())
     {
@@ -197,7 +197,7 @@ void PyHSCam_init(void)
     // Add a search directory for dlls
     if (0 == SetDllDirectory("dll/"))
     {
-        throw CamRuntimeError("SetDllDirectory failed. This error should never happen.");
+        throw CamRuntimeError("SetDllDirectory failed!");
     }
 
     unsigned long retVal;
@@ -226,10 +226,9 @@ uint64_t PyHSCam_openDeviceByIp(const char * ipStr)
         ipNumeric = (ipNumeric << 8) | std::stoi(item);
     }
 
-    PDC_DETECT_NUM_INFO detectedNumInfo; // Stores result
+    PDC_DETECT_NUM_INFO detectedNumInfo;
     unsigned long ipList[PDC_MAX_DEVICE];
     ipList[0] = ipNumeric;
-
 
     // Detect the attached device
     retVal = PDC_DetectDevice(PDC_INTTYPE_G_ETHER,  // Gigabit-ethernet interface
@@ -563,7 +562,7 @@ boost::python::tuple PyHSCam_getCurrentResolution(uint64_t interfaceId)
         throw CamRuntimeError("Failed to read current resolution!", errorCode);
     }
 
-    return boost::python::make_tuple(width, height);;
+    return boost::python::make_tuple(width, height);
 }
 
 void PyHSCam_setResolution(uint64_t interfaceId, unsigned long width, unsigned long height)
@@ -726,12 +725,33 @@ void PyHSCam_haltRecording(uint64_t interfaceId)
 {
     // Halt recording forcibly by setting the mode to "LIVE"
     PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
+
+    clock_t startTime;
+    unsigned long deviceStatus;
+    startTime = clock();
+    bool actionCompleted = false;
+    while ((clock() - startTime) < STATUS_CHECK_TIMEOUT)
+    {
+        deviceStatus = PyHSCam_getStatus(interfaceId);
+        if (deviceStatus == PDC_STATUS_LIVE)
+        {
+            // The device is ready for recording
+            actionCompleted = true;
+            break;
+        }
+    }
+    if (!actionCompleted)
+    {
+        throw CamRuntimeError("Function timed out while waiting for device to enter LIVE mode.");
+    }
 }
 
 
 void PyHSCam_recordBlocking(uint64_t interfaceId, uint64_t duration)
 {
     unsigned long deviceStatus;
+
+    PyHSCam_assertDeviceStatus(interfaceId, PDC_STATUS_LIVE);
 
     clock_t startTime;
     startTime = clock();
@@ -741,9 +761,7 @@ void PyHSCam_recordBlocking(uint64_t interfaceId, uint64_t duration)
     // Starting the timer after PyHSCam_beginRecording() is called introduces ~200 ms of extra
     // uncounted recording time.
     duration += 5;
-
     PyHSCam_beginRecording(interfaceId);
-
     clock_t curTime;
     // Wait for recording to finish
     do
@@ -757,7 +775,6 @@ void PyHSCam_recordBlocking(uint64_t interfaceId, uint64_t duration)
         }
         curTime = clock();
     } while ((curTime - startTime) < duration);
-
     PyHSCam_haltRecording(interfaceId);
 }
 
