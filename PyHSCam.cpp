@@ -20,7 +20,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 // Disable security warnings because accoring to microsoft,
-// sprintf and family "may be unsafe"...
+// sprintf and family "may be unsafe"
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <windows.h>
@@ -89,6 +89,9 @@ unsigned long
 
 long
     PyHSCam_getMemoryFrameCount(uint64_t interfaceId);
+
+uint64_t
+    PyHSCam_getMaxRecordingTime(uint64_t interfaceId);
 
 
 // Combine deviceNum and childNum into a single uint64_t
@@ -369,6 +372,32 @@ boost::python::list PyHSCam_getValidCapRates(uint64_t interfaceId)
     }
 
     return pyModeList;
+}
+
+uint64_t PyHSCam_getMaxRecordingTime(uint64_t interfaceId)
+{
+    unsigned long retVal;
+    unsigned long errorCode;
+
+    unsigned long nFrames;
+    unsigned long nBlocks;
+
+    retVal = PDC_GetMaxFrames(IFACE_ID_GET_DEV_NUM(interfaceId),
+                                IFACE_ID_GET_CHILD_NUM(interfaceId),
+                                &nFrames,       // Output
+                                &nBlocks,       // Output - unused
+                                &errorCode);    // Output
+    if (retVal == PDC_FAILED)
+    {
+        throw CamRuntimeError("Failed to retrieve max possible frames.", errorCode);
+    }
+
+    unsigned long currentCapRate;
+    currentCapRate = PyHSCam_getCurrentCapRate(interfaceId);
+
+    // nFrames / currentCapRate = Max possible recording time in seconds;
+    // convert to milliseconds and add a small amount to account for errors
+    return (uint64_t)(1000 * 1.05 * ((double)nFrames) / ((double)currentCapRate));
 }
 
 void PyHSCam_setCapRate(uint64_t interfaceId, unsigned long capRate)
@@ -761,6 +790,8 @@ void PyHSCam_recordBlocking(uint64_t interfaceId, uint64_t duration)
     // Starting the timer after PyHSCam_beginRecording() is called introduces ~200 ms of extra
     // uncounted recording time.
     duration += 5;
+    uint64_t maxTime = PyHSCam_getMaxRecordingTime(interfaceId);
+    duration = (duration < maxTime) ? duration : maxTime;
     PyHSCam_beginRecording(interfaceId);
     clock_t curTime;
     // Wait for recording to finish
@@ -776,6 +807,10 @@ void PyHSCam_recordBlocking(uint64_t interfaceId, uint64_t duration)
         curTime = clock();
     } while ((curTime - startTime) < duration);
     PyHSCam_haltRecording(interfaceId);
+    if ((curTime - startTime) >= maxTime)
+    {
+        throw CamRuntimeError("Recording exceeded available memory!");
+    }
 }
 
 
